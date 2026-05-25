@@ -24,8 +24,23 @@ class Settings(BaseSettings):
     EMBEDDING_MODEL: str = "text-embedding-3-small"
     EMBEDDING_DIMENSIONS: int = 1536
     EMBEDDING_BATCH_SIZE: int = 64
+    EMBEDDING_CACHE_TTL_SECONDS: int = 60 * 60
+
+    SEARCH_VECTOR_K: int = 5
+    SEARCH_FTS_K: int = 5
+    SEARCH_RESULT_K: int = 10
+    SEARCH_ENABLE_RERANK: bool = Field(
+        default=True,
+        description="Whether to enable cross-encoder reranking (false uses RRF only)",
+    )
+    SEARCH_RRF_K: int = 60
+    SEARCH_CACHE_TTL_SECONDS: int = 60 * 15
+    SEARCH_POOL_MAX_WORKERS: int = 4
 
     POSTGRES_URL: str = Field(..., description="The URL of the PostgreSQL server")
+    DB_POOL_SIZE: int = 10
+    DB_MAX_OVERFLOW: int = 20
+    DB_POOL_PRE_PING: bool = True
     S3_ENDPOINT_URL: str = Field(..., description="The URL of the S3 server")
     S3_PUBLIC_ENDPOINT_URL: str | None = Field(
         default=None,

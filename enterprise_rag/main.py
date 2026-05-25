@@ -14,7 +14,8 @@ from pydantic import BaseModel, Field
 from enterprise_rag.lib.broker import celery_app
 from enterprise_rag.lib.bucket import minio_client, s3, s3_presign
 from enterprise_rag.lib.db import Chunk as DbChunk
-from enterprise_rag.search.pipeline import search_pipeline
+from enterprise_rag.search import search_pipeline
+from enterprise_rag.search.reranking import get_reranker
 from enterprise_rag.utils.schemas import SearchChunkResult
 from enterprise_rag.utils.settings import settings
 
@@ -68,6 +69,12 @@ def listen_for_document_upload_complete_event() -> None:
 @app.on_event("startup")
 def on_startup() -> None:
     ensure_bucket_exists()
+    if settings.SEARCH_ENABLE_RERANK:
+        threading.Thread(
+            target=get_reranker,
+            name="reranker-warmup",
+            daemon=True,
+        ).start()
     threading.Thread(
         target=listen_for_document_upload_complete_event,
         name="s3-upload-listener",
@@ -283,10 +290,5 @@ def _to_search_result(chunk: DbChunk) -> SearchChunkResult:
 
 @app.post("/api/search", response_model=SearchResponse)
 def search(body: SearchRequest) -> SearchResponse:
-    import concurrent.futures
-
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        future_search = executor.submit(search_pipeline, body.query)
-        return SearchResponse(
-            chunks=[_to_search_result(chunk) for chunk in future_search.result()]
-        )
+    chunks = search_pipeline(body.query)
+    return SearchResponse(chunks=[_to_search_result(chunk) for chunk in chunks])

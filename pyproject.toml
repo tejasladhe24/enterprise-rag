@@ -1,7 +1,7 @@
 [project]
 name = "enterprise-rag"
 version = "0.1.0"
-description = "Add your description here"
+description = "Enterprise document ingestion, chunking, and hybrid RAG search"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

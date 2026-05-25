@@ -1,4 +1,5 @@
 import json
+from typing import Any
 
 from redis import Redis
 
@@ -6,6 +7,32 @@ from enterprise_rag.lib.db import Chunk as DbChunk
 from enterprise_rag.utils.settings import settings
 
 redis_client = Redis.from_url(f"{settings.REDIS_URL}/2")
+
+_RESULTS_PREFIX = "search:results:"
+_EMBED_PREFIX = "search:embed:"
+
+
+def normalize_query(query: str) -> str:
+    return " ".join(query.strip().lower().split())
+
+
+def _results_key(query: str) -> str:
+    return f"{_RESULTS_PREFIX}{normalize_query(query)}"
+
+
+def _embed_key(query: str) -> str:
+    return f"{_EMBED_PREFIX}{normalize_query(query)}"
+
+
+def _get_json(key: str) -> Any | None:
+    raw = redis_client.get(key)
+    if not raw:
+        return None
+    return json.loads(raw)
+
+
+def _set_json(key: str, value: Any, ttl: int) -> None:
+    redis_client.set(key, json.dumps(value), ex=ttl)
 
 
 def _chunk_to_dict(chunk: DbChunk) -> dict:
@@ -33,20 +60,38 @@ def _dict_to_chunk(data: dict) -> DbChunk:
 def cache_query_results(
     query: str,
     chunks: list[DbChunk],
-    expires_in: int = 60 * 60 * 12,
+    expires_in: int = settings.SEARCH_CACHE_TTL_SECONDS,
 ) -> None:
-    if not chunks:
+    if not chunks or not normalize_query(query):
         return
-
-    redis_client.set(
-        query,
-        json.dumps([_chunk_to_dict(chunk) for chunk in chunks]),
-        ex=expires_in,
+    _set_json(
+        _results_key(query),
+        [_chunk_to_dict(chunk) for chunk in chunks],
+        expires_in,
     )
 
 
 def get_cached_query_results(query: str) -> list[DbChunk] | None:
-    results = redis_client.get(query)
-    if not results:
+    if not normalize_query(query):
         return None
-    return [_dict_to_chunk(item) for item in json.loads(results)]
+    payload = _get_json(_results_key(query))
+    if payload is None:
+        return None
+    return [_dict_to_chunk(item) for item in payload]
+
+
+def cache_embedding(
+    query: str,
+    embedding: list[float],
+    expires_in: int = settings.EMBEDDING_CACHE_TTL_SECONDS,
+) -> None:
+    if not normalize_query(query):
+        return
+    _set_json(_embed_key(query), embedding, expires_in)
+
+
+def get_cached_embedding(query: str) -> list[float] | None:
+    if not normalize_query(query):
+        return None
+    payload = _get_json(_embed_key(query))
+    return payload if isinstance(payload, list) else None
