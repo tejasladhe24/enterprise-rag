@@ -1,0 +1,151 @@
+name: enterprise_rag
+
+services:
+  postgres:
+    container_name: postgres
+    image: pgvector/pgvector:pg16
+    ports:
+      - 5432:5432
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-admin}
+      POSTGRES_DB: ${POSTGRES_DB:-enterprise_rag}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    command:
+      - -c
+      - listen_addresses=*
+      - -c
+      - wal_level=logical
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-admin} -d ${POSTGRES_DB:-enterprise_rag}",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    container_name: redis
+    image: redis:latest
+    ports:
+      - 6379:6379
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a ${REDIS_PASSWORD} ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    ports:
+      - "9000:9000" # S3 API
+      - "9001:9001" # Web console
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-admin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_API_CORS_ALLOW_ORIGIN: "http://localhost:3000,http://127.0.0.1:3000"
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  celery_worker:
+    container_name: celery_worker
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: celery -A enterprise_rag.celery_app:celery_app worker --loglevel=info
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-admin}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB:-enterprise_rag}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER:-admin}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+      - POSTGRES_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-enterprise_rag}
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
+      - LOG_FILE=logs/enterprise-rag.log
+      - S3_ENDPOINT_URL=http://minio:9000
+      - S3_PUBLIC_ENDPOINT_URL=http://localhost:9000
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL}
+      - AI_GATEWAY_API_KEY=${AI_GATEWAY_API_KEY}
+    depends_on:
+      - postgres
+      - redis
+      - minio
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "celery",
+          "-A",
+          "enterprise_rag.celery_app:celery_app",
+          "status",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  enterprise_rag:
+    container_name: enterprise_rag
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - 8000:8000
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-admin}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB:-enterprise_rag}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER:-admin}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+      - POSTGRES_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-enterprise_rag}
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
+      - LOG_FILE=logs/enterprise-rag.log
+      - S3_ENDPOINT_URL=http://minio:9000
+      - S3_PUBLIC_ENDPOINT_URL=http://localhost:9000
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL}
+      - AI_GATEWAY_API_KEY=${AI_GATEWAY_API_KEY}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  frontend:
+    container_name: frontend
+    build:
+      context: frontend
+      dockerfile: Dockerfile
+    ports:
+      - 3000:3000
+    environment:
+      - BUN_PUBLIC_API_BASE_URL=http://localhost:8000
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
